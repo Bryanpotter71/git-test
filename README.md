@@ -1,5 +1,3 @@
-# git-test
-
-Hello Odin!
+#short rate calc
 
 
