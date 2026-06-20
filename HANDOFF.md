@@ -24,6 +24,15 @@ npm run build    # type-check + production build
 2. **UI/UX polish.** Input validation messages, clearer error states, a readable
    step-by-step calculation breakdown, layout cleanup.
 
+## Working in parallel (two lanes)
+Two agents may work at once (e.g. a cloud iPad session + this local one). To avoid
+collisions, each lane owns its files:
+- **`math` branch** — owns `src/lib/calculations.ts` and `src/lib/calculations.test.ts`.
+- **`ui-polish` branch** — owns `src/App.tsx` and `src/styles.css`. Treat the exports
+  of `calculations.ts` as a stable API; do not change formulas here.
+Merge each into `main` via small PRs. If the UI needs a new value from the math lane,
+land it on `main` first, then pull.
+
 ## Notes
 - Don't reintroduce a `tsc -b` project reference — build uses a plain `tsc` type-check; Vite bundles.
 - If developing on a Mac, keep this repo OUT of an iCloud-synced folder (e.g. ~/Documents),
