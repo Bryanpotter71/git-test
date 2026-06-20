@@ -1,5 +1,9 @@
 export type CancellationType = "insured" | "nonPayment" | "company";
 
+// Kept for backward compatibility with the existing UI controls.
+// "minimumPremiumEndorsement" = standard short-rate method (0.9 penalty on
+//   insured / non-payment cancellations).
+// "standard" = straight pro rata for every cancellation type (no short-rate penalty).
 export type CalculationPreset = "standard" | "minimumPremiumEndorsement";
 
 export interface CalculationInput {
@@ -17,18 +21,34 @@ export interface CalculationResult {
   totalPolicyDays: number;
   earnedDays: number;
   unearnedDays: number;
-  unearnedFactor: number;
+  proRataFactor: number;
+  unearnedFactor: number; // alias of proRataFactor (existing UI field)
+  appliesShortRate: boolean;
+  shortRatePenalty: number;
+  cancellationReturnFactor: number; // factor applied before the minimum-earned floor
   depositPremium: number;
-  proRataReturnPremium: number;
-  minimumEarnedPremiumAmount: number;
   fullyEarnedChargesRetained: number;
-  returnPremiumBeforeCharges: number;
-  finalReturnPremium: number;
+  proRataReturnPremium: number; // depositPremium * proRataFactor
+  minimumEarnedPremiumPercent: number;
+  minimumEarnedPremiumAmount: number; // depositPremium * mep% (premium earned under MEP)
+  earnedFromCancellation: number; // total earned via the cancellation factor (incl. fully earned charges)
+  earnedFromMinimum: number; // total earned via the minimum earned premium (incl. fully earned charges)
+  earnedPremium: number; // the greater of the two earned amounts — what the carrier keeps
+  returnPremiumBeforeCharges: number; // depositPremium * cancellationReturnFactor (before MEP floor)
+  finalReturnPremium: number; // actual premium returned
   preset: CalculationPreset;
   cancellationType: CancellationType;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Cancellation factors are rounded to 3 decimals to match the reference example
+// (pro rata 0.773 -> short rate 0.9 * 0.773 = 0.696). If the source system instead
+// carries full precision internally, set this to null. Validate against real outputs.
+const FACTOR_DECIMALS: number | null = 3;
+
+// Short-rate return factor = SHORT_RATE_PENALTY * pro rata factor.
+const SHORT_RATE_PENALTY = 0.9;
 
 export function calculateReturnPremium(input: CalculationInput): CalculationResult {
   const depositPremium = normalizeMoney(input.depositPremium, "Deposit premium");
@@ -40,7 +60,7 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
     input.minimumEarnedPremiumPercent ?? 0,
     "Minimum earned premium percentage"
   );
-  const preset = input.preset ?? "standard";
+  const preset = input.preset ?? "minimumPremiumEndorsement";
 
   const totalPolicyDays = differenceInPolicyDays(
     input.policyEffectiveDate,
@@ -52,59 +72,56 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
     input.cancellationEffectiveDate
   );
   const unearnedDays = totalPolicyDays - earnedDays;
-  const unearnedFactor = unearnedDays / totalPolicyDays;
 
-  const proRataReturnPremium = roundCurrency(depositPremium * unearnedFactor);
-  const minimumEarnedPremiumAmount = roundCurrency(
-    depositPremium * (minimumEarnedPremiumPercent / 100)
+  const proRataFactor = roundFactor(unearnedDays / totalPolicyDays);
+
+  // Short rate applies the 0.9 penalty on insured / non-payment cancellations.
+  // Company (carrier) cancellations and the "standard" preset use straight pro rata.
+  const appliesShortRate =
+    preset !== "standard" &&
+    (input.cancellationType === "insured" || input.cancellationType === "nonPayment");
+
+  const cancellationReturnFactor = appliesShortRate
+    ? roundFactor(SHORT_RATE_PENALTY * proRataFactor)
+    : proRataFactor;
+
+  // Earned premium computed two ways; the carrier keeps the GREATER (so the
+  // minimum earned premium acts as a floor). Fully earned charges (e.g. terrorism
+  // premium) are added to both sides — they are always earned and never returned.
+  const mepFraction = minimumEarnedPremiumPercent / 100;
+  const earnedFromCancellation = roundCurrency(
+    depositPremium * (1 - cancellationReturnFactor) + fullyEarnedChargesRetained
   );
-  const standardReturnPremiumBeforeCharges = calculateStandardReturnPremium(
-    depositPremium,
-    proRataReturnPremium,
-    minimumEarnedPremiumAmount
+  const earnedFromMinimum = roundCurrency(
+    depositPremium * mepFraction + fullyEarnedChargesRetained
   );
-  const returnPremiumBeforeCharges =
-    preset === "minimumPremiumEndorsement"
-      ? calculateMinimumPremiumEndorsementReturn(
-          depositPremium,
-          unearnedFactor,
-          input.cancellationType
-        )
-      : standardReturnPremiumBeforeCharges;
+  const earnedPremium = Math.max(earnedFromCancellation, earnedFromMinimum);
+
+  const totalCollected = depositPremium + fullyEarnedChargesRetained;
+  const finalReturnPremium = roundCurrency(Math.max(0, totalCollected - earnedPremium));
 
   return {
     totalPolicyDays,
     earnedDays,
     unearnedDays,
-    unearnedFactor,
+    proRataFactor,
+    unearnedFactor: proRataFactor,
+    appliesShortRate,
+    shortRatePenalty: SHORT_RATE_PENALTY,
+    cancellationReturnFactor,
     depositPremium,
-    proRataReturnPremium,
-    minimumEarnedPremiumAmount,
     fullyEarnedChargesRetained,
-    returnPremiumBeforeCharges,
-    finalReturnPremium: roundCurrency(
-      Math.max(0, returnPremiumBeforeCharges - fullyEarnedChargesRetained)
-    ),
+    proRataReturnPremium: roundCurrency(depositPremium * proRataFactor),
+    minimumEarnedPremiumPercent,
+    minimumEarnedPremiumAmount: roundCurrency(depositPremium * mepFraction),
+    earnedFromCancellation,
+    earnedFromMinimum,
+    earnedPremium,
+    returnPremiumBeforeCharges: roundCurrency(depositPremium * cancellationReturnFactor),
+    finalReturnPremium,
     preset,
     cancellationType: input.cancellationType
   };
-}
-
-export function calculateMinimumPremiumEndorsementReturn(
-  depositPremium: number,
-  unearnedFactor: number,
-  cancellationType: CancellationType
-): number {
-  const normalizedDepositPremium = normalizeMoney(depositPremium, "Deposit premium");
-
-  if (cancellationType === "company") {
-    return roundCurrency(normalizedDepositPremium * unearnedFactor);
-  }
-
-  const maxReturnPremium = normalizedDepositPremium * 0.75;
-  const scaledUnearnedPremium = normalizedDepositPremium * 0.9 * unearnedFactor;
-
-  return roundCurrency(Math.min(maxReturnPremium, scaledUnearnedPremium));
 }
 
 export function differenceInPolicyDays(startDate: string, endDate: string): number {
@@ -144,24 +161,36 @@ export function roundCurrency(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+export function roundFactor(value: number): number {
+  if (FACTOR_DECIMALS === null) {
+    return value;
+  }
+
+  const multiplier = 10 ** FACTOR_DECIMALS;
+  return Math.round((value + Number.EPSILON) * multiplier) / multiplier;
+}
+
 export function buildCalculationNote(result: CalculationResult): string {
-  const presetLabel =
-    result.preset === "minimumPremiumEndorsement"
-      ? "Minimum Premium Endorsement Style"
-      : "Standard pro rata with minimum earned premium";
+  const method = result.appliesShortRate
+    ? `Short rate (${result.shortRatePenalty} × pro rata)`
+    : "Pro rata";
   const cancellationTypeLabel: Record<CancellationType, string> = {
     insured: "insured cancellation",
     nonPayment: "non-payment cancellation",
     company: "company cancellation"
   };
+  const earnedBasis =
+    result.earnedFromMinimum > result.earnedFromCancellation
+      ? "minimum earned premium controls"
+      : "cancellation factor controls";
 
   return [
-    `Preset: ${presetLabel}.`,
+    `Method: ${method}.`,
     `Cancellation type: ${cancellationTypeLabel[result.cancellationType]}.`,
-    `Day count: ${result.earnedDays} earned days, ${result.unearnedDays} unearned days, ${result.totalPolicyDays} total policy days.`,
-    `Pro rata return premium: ${formatCurrency(result.proRataReturnPremium)}.`,
-    `Fully earned charges retained: ${formatCurrency(result.fullyEarnedChargesRetained)}.`,
-    `Estimated final return premium: ${formatCurrency(result.finalReturnPremium)}.`
+    `Day count: ${result.earnedDays} earned / ${result.unearnedDays} unearned of ${result.totalPolicyDays} total days.`,
+    `Pro rata factor ${result.proRataFactor}; cancellation return factor ${result.cancellationReturnFactor}.`,
+    `Earned via cancellation ${formatCurrency(result.earnedFromCancellation)} vs earned via minimum ${formatCurrency(result.earnedFromMinimum)} — ${earnedBasis}.`,
+    `Estimated return premium: ${formatCurrency(result.finalReturnPremium)}.`
   ].join(" ");
 }
 
@@ -172,16 +201,6 @@ export function formatCurrency(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(value);
-}
-
-function calculateStandardReturnPremium(
-  depositPremium: number,
-  proRataReturnPremium: number,
-  minimumEarnedPremiumAmount: number
-): number {
-  const maximumReturnAfterMinimum = Math.max(0, depositPremium - minimumEarnedPremiumAmount);
-
-  return roundCurrency(Math.min(proRataReturnPremium, maximumReturnAfterMinimum));
 }
 
 function parseDateOnly(dateValue: string, label: string): Date {
