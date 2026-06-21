@@ -4,7 +4,11 @@ import {
   calculateReturnPremium,
   formatCurrency
 } from "./lib/calculations";
-import type { CancellationType, CalculationPreset } from "./lib/calculations";
+import type {
+  CancellationType,
+  CalculationPreset,
+  CalculationResult
+} from "./lib/calculations";
 
 const DISCLAIMER =
   "For estimate and audit support only. Final premium return depends on policy wording, endorsements, fees, taxes, filings, billing rules, and applicable law.";
@@ -27,61 +31,104 @@ const initialFormState: FormState = {
   depositPremium: "10000",
   minimumEarnedPremiumPercent: "25",
   cancellationType: "insured",
-  fullyEarnedCharges: "250",
+  fullyEarnedCharges: "0",
   preset: "minimumPremiumEndorsement"
 };
+
+type FieldErrors = Partial<Record<keyof FormState, string>>;
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function validateForm(form: FormState): FieldErrors {
+  const errors: FieldErrors = {};
+  const eff = form.policyEffectiveDate;
+  const exp = form.policyExpirationDate;
+  const can = form.cancellationEffectiveDate;
+
+  const validDate = (value: string) => DATE_PATTERN.test(value) && !Number.isNaN(Date.parse(value));
+
+  if (!validDate(eff)) errors.policyEffectiveDate = "Enter a valid policy effective date.";
+  if (!validDate(exp)) errors.policyExpirationDate = "Enter a valid policy expiration date.";
+  if (!validDate(can)) errors.cancellationEffectiveDate = "Enter a valid cancellation effective date.";
+
+  if (!errors.policyEffectiveDate && !errors.policyExpirationDate && exp <= eff) {
+    errors.policyExpirationDate = "Expiration must be after the effective date.";
+  }
+  if (!errors.policyEffectiveDate && !errors.cancellationEffectiveDate && can < eff) {
+    errors.cancellationEffectiveDate = "Cancellation can't be before the effective date.";
+  }
+  if (
+    !errors.policyEffectiveDate &&
+    !errors.policyExpirationDate &&
+    !errors.cancellationEffectiveDate &&
+    can > exp
+  ) {
+    errors.cancellationEffectiveDate = "Cancellation can't be after the expiration date.";
+  }
+
+  const premium = form.depositPremium.trim();
+  if (premium === "") {
+    errors.depositPremium = "Enter the deposit premium.";
+  } else if (!Number.isFinite(Number(premium)) || Number(premium) < 0) {
+    errors.depositPremium = "Premium must be a non-negative number.";
+  }
+
+  const mep = form.minimumEarnedPremiumPercent.trim();
+  if (mep !== "") {
+    const value = Number(mep);
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      errors.minimumEarnedPremiumPercent = "Use a percentage between 0 and 100.";
+    }
+  }
+
+  const charges = form.fullyEarnedCharges.trim();
+  if (charges !== "") {
+    const value = Number(charges);
+    if (!Number.isFinite(value) || value < 0) {
+      errors.fullyEarnedCharges = "Charges must be a non-negative number.";
+    }
+  }
+
+  return errors;
+}
 
 function App() {
   const [form, setForm] = useState<FormState>(initialFormState);
   const [copied, setCopied] = useState(false);
 
-  const parsedInput = useMemo(
-    () => ({
-      policyEffectiveDate: form.policyEffectiveDate,
-      policyExpirationDate: form.policyExpirationDate,
-      cancellationEffectiveDate: form.cancellationEffectiveDate,
-      depositPremium: parseAmount(form.depositPremium),
-      minimumEarnedPremiumPercent: parseAmount(form.minimumEarnedPremiumPercent),
-      cancellationType: form.cancellationType,
-      fullyEarnedCharges: parseAmount(form.fullyEarnedCharges),
-      preset: form.preset
-    }),
-    [
-      form.cancellationEffectiveDate,
-      form.cancellationType,
-      form.depositPremium,
-      form.fullyEarnedCharges,
-      form.minimumEarnedPremiumPercent,
-      form.policyEffectiveDate,
-      form.policyExpirationDate,
-      form.preset
-    ]
-  );
+  const errors = useMemo(() => validateForm(form), [form]);
+  const hasErrors = Object.keys(errors).length > 0;
 
   const calculation = useMemo(() => {
-    try {
-      const result = calculateReturnPremium(parsedInput);
+    if (hasErrors) {
+      return { result: null as CalculationResult | null, note: "", error: null as string | null };
+    }
 
-      return {
-        result,
-        note: buildCalculationNote(result),
-        error: null
-      };
+    try {
+      const result = calculateReturnPremium({
+        policyEffectiveDate: form.policyEffectiveDate,
+        policyExpirationDate: form.policyExpirationDate,
+        cancellationEffectiveDate: form.cancellationEffectiveDate,
+        depositPremium: parseAmount(form.depositPremium),
+        minimumEarnedPremiumPercent: parseAmount(form.minimumEarnedPremiumPercent),
+        cancellationType: form.cancellationType,
+        fullyEarnedCharges: parseAmount(form.fullyEarnedCharges),
+        preset: form.preset
+      });
+
+      return { result, note: buildCalculationNote(result), error: null as string | null };
     } catch (error) {
       return {
-        result: null,
+        result: null as CalculationResult | null,
         note: "",
         error: error instanceof Error ? error.message : "Unable to calculate return premium."
       };
     }
-  }, [parsedInput]);
+  }, [form, hasErrors]);
 
   const setField = <K extends keyof FormState>(field: K, value: FormState[K]) => {
     setCopied(false);
-    setForm((current) => ({
-      ...current,
-      [field]: value
-    }));
+    setForm((current) => ({ ...current, [field]: value }));
   };
 
   const copyNote = async () => {
@@ -102,57 +149,75 @@ function App() {
     }
   };
 
+  const result = calculation.result;
+
   return (
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <h1>E&S Return Premium Calculator</h1>
+          <h1>E&amp;S Return Premium Calculator</h1>
           <p>Generic cancellation estimate workspace with configurable premium inputs.</p>
         </div>
       </header>
 
       <section className="workspace" aria-label="Return premium calculator">
-        <form className="calculator-panel" onSubmit={(event) => event.preventDefault()}>
+        <form className="calculator-panel" onSubmit={(event) => event.preventDefault()} noValidate>
           <div className="panel-heading">
             <h2>Policy Inputs</h2>
             <p>Use sanitized values for estimation and audit review.</p>
           </div>
 
           <div className="field-grid">
-            <Field label="Policy effective date" htmlFor="policy-effective-date">
+            <Field
+              label="Policy effective date"
+              htmlFor="policy-effective-date"
+              error={errors.policyEffectiveDate}
+            >
               <input
                 id="policy-effective-date"
                 type="date"
+                aria-invalid={Boolean(errors.policyEffectiveDate)}
                 value={form.policyEffectiveDate}
                 onChange={(event) => setField("policyEffectiveDate", event.target.value)}
               />
             </Field>
 
-            <Field label="Policy expiration date" htmlFor="policy-expiration-date">
+            <Field
+              label="Policy expiration date"
+              htmlFor="policy-expiration-date"
+              error={errors.policyExpirationDate}
+            >
               <input
                 id="policy-expiration-date"
                 type="date"
+                aria-invalid={Boolean(errors.policyExpirationDate)}
                 value={form.policyExpirationDate}
                 onChange={(event) => setField("policyExpirationDate", event.target.value)}
               />
             </Field>
 
-            <Field label="Cancellation effective date" htmlFor="cancellation-effective-date">
+            <Field
+              label="Cancellation effective date"
+              htmlFor="cancellation-effective-date"
+              error={errors.cancellationEffectiveDate}
+            >
               <input
                 id="cancellation-effective-date"
                 type="date"
+                aria-invalid={Boolean(errors.cancellationEffectiveDate)}
                 value={form.cancellationEffectiveDate}
                 onChange={(event) => setField("cancellationEffectiveDate", event.target.value)}
               />
             </Field>
 
-            <Field label="Deposit premium" htmlFor="deposit-premium">
+            <Field label="Deposit premium" htmlFor="deposit-premium" error={errors.depositPremium}>
               <input
                 id="deposit-premium"
                 type="number"
                 min="0"
                 step="0.01"
                 inputMode="decimal"
+                aria-invalid={Boolean(errors.depositPremium)}
                 value={form.depositPremium}
                 onChange={(event) => setField("depositPremium", event.target.value)}
               />
@@ -178,14 +243,16 @@ function App() {
                 value={form.preset}
                 onChange={(event) => setField("preset", event.target.value as CalculationPreset)}
               >
-                <option value="minimumPremiumEndorsement">
-                  Minimum Premium Endorsement Style
-                </option>
-                <option value="standard">Standard minimum earned percentage</option>
+                <option value="minimumPremiumEndorsement">Short rate (0.9 × pro rata)</option>
+                <option value="standard">Straight pro rata</option>
               </select>
             </Field>
 
-            <Field label="Minimum earned premium %" htmlFor="minimum-earned-premium">
+            <Field
+              label="Minimum earned premium %"
+              htmlFor="minimum-earned-premium"
+              error={errors.minimumEarnedPremiumPercent}
+            >
               <input
                 id="minimum-earned-premium"
                 type="number"
@@ -193,20 +260,25 @@ function App() {
                 max="100"
                 step="0.01"
                 inputMode="decimal"
+                aria-invalid={Boolean(errors.minimumEarnedPremiumPercent)}
                 value={form.minimumEarnedPremiumPercent}
-                onChange={(event) =>
-                  setField("minimumEarnedPremiumPercent", event.target.value)
-                }
+                onChange={(event) => setField("minimumEarnedPremiumPercent", event.target.value)}
               />
             </Field>
 
-            <Field label="Fully earned charges" htmlFor="fully-earned-charges">
+            <Field
+              label="Fully earned charges"
+              htmlFor="fully-earned-charges"
+              error={errors.fullyEarnedCharges}
+              hint="Fees, taxes, or TRIA kept in full — never returned."
+            >
               <input
                 id="fully-earned-charges"
                 type="number"
                 min="0"
                 step="0.01"
                 inputMode="decimal"
+                aria-invalid={Boolean(errors.fullyEarnedCharges)}
                 value={form.fullyEarnedCharges}
                 onChange={(event) => setField("fullyEarnedCharges", event.target.value)}
               />
@@ -220,56 +292,90 @@ function App() {
             <p>Calculated from the current policy inputs.</p>
           </div>
 
-          {calculation.error ? (
+          {hasErrors ? (
+            <div className="results-placeholder" role="status">
+              Complete the highlighted fields to see the calculation.
+            </div>
+          ) : calculation.error ? (
             <div className="error-message" role="alert">
               {calculation.error}
             </div>
-          ) : (
-            calculation.result && (
-              <>
-                <div className="summary-total">
-                  <span>Final return premium</span>
-                  <strong>{formatCurrency(calculation.result.finalReturnPremium)}</strong>
-                </div>
+          ) : result ? (
+            <>
+              <div className="summary-total">
+                <span>Final return premium</span>
+                <strong>{formatCurrency(result.finalReturnPremium)}</strong>
+              </div>
 
-                <div className="metric-grid">
-                  <Metric label="Total policy days" value={calculation.result.totalPolicyDays} />
-                  <Metric label="Earned days" value={calculation.result.earnedDays} />
-                  <Metric label="Unearned days" value={calculation.result.unearnedDays} />
-                  <Metric
-                    label="Pro rata return premium"
-                    value={formatCurrency(calculation.result.proRataReturnPremium)}
+              <div className="breakdown">
+                <h3>How this was calculated</h3>
+                <ol className="breakdown-steps">
+                  <Step
+                    label="Policy term"
+                    value={`${result.totalPolicyDays} days`}
+                    note={`${form.policyEffectiveDate} → ${form.policyExpirationDate}`}
                   />
-                  <Metric
-                    label="Minimum earned premium"
-                    value={formatCurrency(calculation.result.minimumEarnedPremiumAmount)}
+                  <Step
+                    label="Earned / unearned"
+                    value={`${result.earnedDays} / ${result.unearnedDays} days`}
                   />
-                  <Metric
-                    label="Fully earned charges retained"
-                    value={formatCurrency(calculation.result.fullyEarnedChargesRetained)}
+                  <Step
+                    label="Pro-rata factor"
+                    value={String(result.proRataFactor)}
+                    note="unearned ÷ total days"
                   />
-                  <Metric
-                    label="Return premium before charges"
-                    value={formatCurrency(calculation.result.returnPremiumBeforeCharges)}
+                  <Step
+                    label="Method"
+                    value={result.appliesShortRate ? "Short rate (0.9 × pro rata)" : "Straight pro rata"}
+                    note={cancellationTypeLabel(result.cancellationType)}
                   />
-                  <Metric
-                    label="Unearned factor"
-                    value={`${(calculation.result.unearnedFactor * 100).toFixed(2)}%`}
+                  {result.appliesShortRate ? (
+                    <Step
+                      label="Short-rate factor"
+                      value={String(result.cancellationReturnFactor)}
+                      note={`0.9 × ${result.proRataFactor}`}
+                    />
+                  ) : null}
+                  <Step
+                    label="Earned via cancellation"
+                    value={formatCurrency(result.earnedFromCancellation)}
                   />
-                </div>
+                  <Step
+                    label={`Earned via minimum (${result.minimumEarnedPremiumPercent}%)`}
+                    value={formatCurrency(result.earnedFromMinimum)}
+                  />
+                  <Step
+                    label="Carrier keeps the greater"
+                    value={formatCurrency(result.earnedPremium)}
+                    note={controlsLabel(result)}
+                    highlight
+                  />
+                  {result.fullyEarnedChargesRetained > 0 ? (
+                    <Step
+                      label="Fully earned charges retained"
+                      value={formatCurrency(result.fullyEarnedChargesRetained)}
+                      note="kept in full, never returned"
+                    />
+                  ) : null}
+                  <Step
+                    label="Return premium"
+                    value={formatCurrency(result.finalReturnPremium)}
+                    isFinal
+                  />
+                </ol>
+              </div>
 
-                <div className="note-block">
-                  <div className="note-header">
-                    <h3>Calculation note</h3>
-                    <button type="button" onClick={copyNote}>
-                      {copied ? "Copied" : "Copy note"}
-                    </button>
-                  </div>
-                  <textarea readOnly value={calculation.note} aria-label="Calculation note" />
+              <div className="note-block">
+                <div className="note-header">
+                  <h3>Calculation note</h3>
+                  <button type="button" onClick={copyNote}>
+                    {copied ? "Copied" : "Copy note"}
+                  </button>
                 </div>
-              </>
-            )
-          )}
+                <textarea readOnly value={calculation.note} aria-label="Calculation note" />
+              </div>
+            </>
+          ) : null}
         </aside>
       </section>
 
@@ -282,29 +388,58 @@ interface FieldProps {
   children: React.ReactNode;
   htmlFor: string;
   label: string;
+  error?: string;
+  hint?: string;
 }
 
-function Field({ children, htmlFor, label }: FieldProps) {
+function Field({ children, htmlFor, label, error, hint }: FieldProps) {
   return (
-    <label className="field" htmlFor={htmlFor}>
+    <label className={`field${error ? " has-error" : ""}`} htmlFor={htmlFor}>
       <span>{label}</span>
       {children}
+      {error ? (
+        <small className="field-message" role="alert">
+          {error}
+        </small>
+      ) : hint ? (
+        <small className="field-hint">{hint}</small>
+      ) : null}
     </label>
   );
 }
 
-interface MetricProps {
+interface StepProps {
   label: string;
-  value: number | string;
+  value: string;
+  note?: string;
+  highlight?: boolean;
+  isFinal?: boolean;
 }
 
-function Metric({ label, value }: MetricProps) {
+function Step({ label, value, note, highlight, isFinal }: StepProps) {
   return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <li
+      className={`breakdown-step${highlight ? " is-highlight" : ""}${isFinal ? " is-final" : ""}`}
+    >
+      <div className="breakdown-step-main">
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      {note ? <em>{note}</em> : null}
+    </li>
   );
+}
+
+function cancellationTypeLabel(type: CancellationType): string {
+  if (type === "insured") return "insured cancellation";
+  if (type === "nonPayment") return "non-payment cancellation";
+  return "company cancellation";
+}
+
+function controlsLabel(result: CalculationResult): string {
+  return result.earnedFromMinimum > result.earnedFromCancellation
+    ? "minimum earned premium controls"
+    : "cancellation factor controls";
 }
 
 function parseAmount(value: string): number {

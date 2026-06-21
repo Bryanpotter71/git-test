@@ -160,6 +160,31 @@ button {
   background: #ffffff;
 }
 
+.field.has-error input,
+.field.has-error select {
+  border-color: var(--danger);
+  background: #fff7f6;
+}
+
+.field.has-error input:focus,
+.field.has-error select:focus {
+  box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.14);
+}
+
+.field-message {
+  color: var(--danger);
+  font-size: 0.76rem;
+  font-weight: 680;
+  line-height: 1.3;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
 .summary-total {
   display: grid;
   gap: 8px;
@@ -184,35 +209,78 @@ button {
   line-height: 1;
 }
 
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.breakdown h3 {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 760;
 }
 
-.metric {
-  min-height: 86px;
+.breakdown-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
-  align-content: space-between;
-  gap: 10px;
+  gap: 8px;
+}
+
+.breakdown-step {
+  display: grid;
+  gap: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fbfcfd;
-  padding: 14px;
+  padding: 12px 14px;
 }
 
-.metric span {
+.breakdown-step-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.breakdown-step-main span {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-weight: 700;
   line-height: 1.3;
 }
 
-.metric strong {
+.breakdown-step-main strong {
   color: var(--text);
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: 760;
-  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.breakdown-step em {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-style: normal;
+  line-height: 1.3;
+}
+
+.breakdown-step.is-highlight {
+  border-color: #b8d9d5;
+  background: #f1f8f7;
+}
+
+.breakdown-step.is-final {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #f5fbfa 0%, #edf7f5 100%);
+}
+
+.breakdown-step.is-final .breakdown-step-main span {
+  color: var(--accent-strong);
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+.breakdown-step.is-final .breakdown-step-main strong {
+  color: var(--accent-strong);
+  font-size: 1.2rem;
 }
 
 .note-block {
@@ -276,6 +344,18 @@ button {
   font-size: 0.92rem;
   font-weight: 680;
   line-height: 1.45;
+}
+
+.results-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  padding: 20px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .disclaimer {
