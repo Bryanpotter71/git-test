@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/bryanromeo/Documents/Short-rate Calc/**)",
+      "Bash(curl -fs http://localhost:5173)",
+      "Bash(break)",
+      "WebFetch(domain:www.cfins.com)",
+      "Bash(npx --yes gh-pages@6 -d dist -t -m \"Deploy E&S Return Premium Calculator\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(git ls-remote *)"
+    ]
+  }
+}
