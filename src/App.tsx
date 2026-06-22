@@ -36,6 +36,7 @@ const initialFormState: FormState = {
 };
 
 type FieldErrors = Partial<Record<keyof FormState, string>>;
+type CopyTarget = "summary" | "note";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -94,7 +95,7 @@ function validateForm(form: FormState): FieldErrors {
 
 function App() {
   const [form, setForm] = useState<FormState>(initialFormState);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<CopyTarget | null>(null);
 
   const errors = useMemo(() => validateForm(form), [form]);
   const hasErrors = Object.keys(errors).length > 0;
@@ -127,36 +128,34 @@ function App() {
   }, [form, hasErrors]);
 
   const setField = <K extends keyof FormState>(field: K, value: FormState[K]) => {
-    setCopied(false);
+    setCopied(null);
     setForm((current) => ({ ...current, [field]: value }));
   };
 
-  const copyNote = async () => {
-    if (!calculation.note) {
-      return;
-    }
+  const result = calculation.result;
+  const summaryText = result ? buildSummaryText(form, result) : "";
 
-    if (!navigator.clipboard?.writeText) {
-      setCopied(false);
+  const copyText = async (text: string, target: CopyTarget) => {
+    if (!text || !navigator.clipboard?.writeText) {
+      setCopied(null);
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(calculation.note);
-      setCopied(true);
+      await navigator.clipboard.writeText(text);
+      setCopied(target);
     } catch {
-      setCopied(false);
+      setCopied(null);
     }
   };
-
-  const result = calculation.result;
 
   return (
     <main className="app-shell">
       <header className="app-header">
         <div>
+          <span className="eyebrow">Cancellation Toolkit</span>
           <h1>E&amp;S Return Premium Calculator</h1>
-          <p>Generic cancellation estimate workspace with configurable premium inputs.</p>
+          <p>Estimate short-rate and pro-rata return premium on cancelled excess &amp; surplus lines policies.</p>
         </div>
       </header>
 
@@ -302,6 +301,48 @@ function App() {
             </div>
           ) : result ? (
             <>
+              <dl className="inputs-recap">
+                <div>
+                  <dt>Policy term</dt>
+                  <dd>
+                    {form.policyEffectiveDate} → {form.policyExpirationDate}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Cancellation</dt>
+                  <dd>{form.cancellationEffectiveDate}</dd>
+                </div>
+                <div>
+                  <dt>Type</dt>
+                  <dd>{cancellationTypeLabel(result.cancellationType)}</dd>
+                </div>
+                <div>
+                  <dt>Deposit premium</dt>
+                  <dd>{formatCurrency(result.depositPremium)}</dd>
+                </div>
+                <div>
+                  <dt>Minimum earned</dt>
+                  <dd>{result.minimumEarnedPremiumPercent}%</dd>
+                </div>
+                <div>
+                  <dt>Fully earned charges</dt>
+                  <dd>{formatCurrency(result.fullyEarnedChargesRetained)}</dd>
+                </div>
+              </dl>
+
+              <div className="result-summary">
+                <span className={`method-badge ${result.appliesShortRate ? "shortrate" : "prorata"}`}>
+                  {result.appliesShortRate ? "Short Rate" : "Pro Rata"}
+                </span>
+                <p className="result-sentence">
+                  {capitalize(cancellationTypeLabel(result.cancellationType))}, {result.earnedDays} of{" "}
+                  {result.totalPolicyDays} days earned — return premium{" "}
+                  <strong>{formatCurrency(result.finalReturnPremium)}</strong> (
+                  {result.appliesShortRate ? "short rate" : "straight pro rata"}, {controlsLabel(result)}
+                  ).
+                </p>
+              </div>
+
               <div className="summary-total">
                 <span>Final return premium</span>
                 <strong>{formatCurrency(result.finalReturnPremium)}</strong>
@@ -365,15 +406,30 @@ function App() {
                 </ol>
               </div>
 
-              <div className="note-block">
-                <div className="note-header">
-                  <h3>Calculation note</h3>
-                  <button type="button" onClick={copyNote}>
-                    {copied ? "Copied" : "Copy note"}
-                  </button>
-                </div>
-                <textarea readOnly value={calculation.note} aria-label="Calculation note" />
+              <div className="results-actions">
+                <button type="button" className="btn-primary" onClick={() => window.print()}>
+                  Print / Save PDF
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => copyText(summaryText, "summary")}
+                >
+                  {copied === "summary" ? "Copied" : "Copy summary"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => copyText(calculation.note, "note")}
+                >
+                  {copied === "note" ? "Copied" : "Copy note"}
+                </button>
               </div>
+
+              <details className="note-block">
+                <summary>Calculation note</summary>
+                <textarea readOnly value={calculation.note} aria-label="Calculation note" />
+              </details>
             </>
           ) : null}
         </aside>
@@ -440,6 +496,29 @@ function controlsLabel(result: CalculationResult): string {
   return result.earnedFromMinimum > result.earnedFromCancellation
     ? "minimum earned premium controls"
     : "cancellation factor controls";
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function buildSummaryText(form: FormState, result: CalculationResult): string {
+  return [
+    "E&S Return Premium — Summary",
+    "",
+    `${capitalize(cancellationTypeLabel(result.cancellationType))}, ${result.earnedDays} of ${result.totalPolicyDays} days earned.`,
+    `Method: ${result.appliesShortRate ? "Short rate (0.9 × pro rata)" : "Straight pro rata"} — ${controlsLabel(result)}.`,
+    "",
+    `Policy term: ${form.policyEffectiveDate} to ${form.policyExpirationDate}`,
+    `Cancellation effective: ${form.cancellationEffectiveDate}`,
+    `Deposit premium: ${formatCurrency(result.depositPremium)}`,
+    `Minimum earned premium: ${result.minimumEarnedPremiumPercent}%`,
+    `Fully earned charges (retained): ${formatCurrency(result.fullyEarnedChargesRetained)}`,
+    "",
+    `Pro-rata factor: ${result.proRataFactor}`,
+    `Cancellation return factor: ${result.cancellationReturnFactor}`,
+    `Return premium: ${formatCurrency(result.finalReturnPremium)}`
+  ].join("\n");
 }
 
 function parseAmount(value: string): number {
