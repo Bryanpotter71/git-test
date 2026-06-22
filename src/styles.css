@@ -1,6 +1,6 @@
 :root {
   color: #14233a;
-  background: #f4f7fc;
+  background: #f6f8fb;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -12,7 +12,7 @@
   --muted: #586a82;
   --border: #d6e0ee;
   --accent: #005eb8;
-  --accent-strong: #00468a;
+  --accent-strong: #003a70;
   --warning: #b7791f;
   --danger: #b42318;
   --shadow: 0 18px 50px rgba(20, 40, 80, 0.12);
@@ -162,7 +162,7 @@ button {
 .field select:focus,
 .note-block textarea:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(0, 94, 184, 0.18);
+  box-shadow: 0 0 0 3px rgba(0, 94, 184, 0.14);
 }
 
 .field input:hover,
@@ -220,7 +220,7 @@ button {
 .method-badge.shortrate {
   background: #e8f1fc;
   color: var(--accent-strong);
-  border: 1px solid #bcd3ef;
+  border: 1px solid #cdddf0;
 }
 
 .method-badge.prorata {
@@ -245,21 +245,22 @@ button {
   display: grid;
   gap: 8px;
   margin-bottom: 18px;
-  padding: 18px;
-  border: 1px solid #bcd3ef;
+  padding: 20px;
+  border: 1px solid #00305c;
   border-radius: 8px;
-  background: linear-gradient(180deg, #eff5fc 0%, #e3edfb 100%);
+  background: linear-gradient(180deg, #00457f 0%, #002a52 100%);
 }
 
 .summary-total span {
-  color: var(--accent-strong);
+  color: #a9cbee;
   font-size: 0.82rem;
   font-weight: 760;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .summary-total strong {
-  color: var(--text);
+  color: #ffffff;
   font-size: clamp(2rem, 5vw, 3rem);
   font-weight: 780;
   line-height: 1;
@@ -319,13 +320,13 @@ button {
 }
 
 .breakdown-step.is-highlight {
-  border-color: #bcd3ef;
+  border-color: #cdddf0;
   background: #eef4fc;
 }
 
 .breakdown-step.is-final {
   border-color: var(--accent);
-  background: linear-gradient(180deg, #eff5fc 0%, #e3edfb 100%);
+  background: linear-gradient(180deg, #f4f8fd 0%, #edf3fb 100%);
 }
 
 .breakdown-step.is-final .breakdown-step-main span {
@@ -546,5 +547,18 @@ button {
 
   .disclaimer {
     margin-top: 18px;
+  }
+
+  .summary-total {
+    background: #ffffff;
+    border-color: var(--border);
+  }
+
+  .summary-total span {
+    color: var(--accent-strong);
+  }
+
+  .summary-total strong {
+    color: var(--text);
   }
 }
