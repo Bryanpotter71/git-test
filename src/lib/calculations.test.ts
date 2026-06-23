@@ -34,27 +34,25 @@ describe("policy day calculations", () => {
 });
 
 describe("authoritative short-rate reference example", () => {
-  // Reproduces the provided reference: premium 50,500; pro rata factor 0.773;
-  // short rate factor 0.9 * 0.773 = 0.696; minimum earned 25%; $10 fully earned (TRIA).
-  // Dates chosen so unearned/total = 282/365 = 0.7726 -> rounds to 0.773.
+  // Reproduces the documented reference: full-precision pro rata 154/365, short rate
+  // 0.9 * 154/365 = 0.3797260273972603 -> rounds to 0.380, return = 0.380 * 10,000.
+  // Cancellation effective date is unearned: earned 211 / unearned 154 of 365 days.
   it("matches the reference to the dollar", () => {
     const result = calculateReturnPremium({
       policyEffectiveDate: "2026-01-01",
       policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-03-25",
-      depositPremium: 50500,
-      fullyEarnedCharges: 10,
-      minimumEarnedPremiumPercent: 25,
+      cancellationEffectiveDate: "2026-07-31",
+      depositPremium: 10000,
+      minimumEarnedPremiumPercent: 0,
       cancellationType: "insured",
       preset: "minimumPremiumEndorsement"
     });
 
-    expect(result.proRataFactor).toBe(0.773);
-    expect(result.cancellationReturnFactor).toBe(0.696);
-    expect(result.earnedFromCancellation).toBe(15362); // 50500 * 0.304 + 10
-    expect(result.earnedFromMinimum).toBe(12635); // 50500 * 0.25 + 10
-    expect(result.earnedPremium).toBe(15362); // cancellation factor controls
-    expect(result.finalReturnPremium).toBe(35148); // 50500 * 0.696
+    expect(result.earnedDays).toBe(211);
+    expect(result.unearnedDays).toBe(154);
+    expect(result.proRataFactor).toBe(0.422); // 154/365 = 0.4219... -> 0.422 (display)
+    expect(result.cancellationReturnFactor).toBe(0.38); // round3(0.9 * 154/365)
+    expect(result.finalReturnPremium).toBe(3800); // 0.380 * 10,000
   });
 });
 

@@ -42,9 +42,8 @@ export interface CalculationResult {
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-// Cancellation factors are rounded to 3 decimals to match the reference example
-// (pro rata 0.773 -> short rate 0.9 * 0.773 = 0.696). If the source system instead
-// carries full precision internally, set this to null. Validate against real outputs.
+// The final cancellation factor is rounded to 3 decimals, computed from the
+// full-precision pro-rata factor (e.g. 0.9 * 154/365 = 0.3797... -> 0.380).
 const FACTOR_DECIMALS: number | null = 3;
 
 // Short-rate return factor = SHORT_RATE_PENALTY * pro rata factor.
@@ -73,7 +72,10 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
   );
   const unearnedDays = totalPolicyDays - earnedDays;
 
-  const proRataFactor = roundFactor(unearnedDays / totalPolicyDays);
+  // Pro-rata factor at full precision (cancellation effective date is unearned,
+  // based on actual policy term days). Rounded separately for display only.
+  const proRataFactorExact = unearnedDays / totalPolicyDays;
+  const proRataFactor = roundFactor(proRataFactorExact);
 
   // Short rate applies the 0.9 penalty on insured / non-payment cancellations.
   // Company (carrier) cancellations and the "standard" preset use straight pro rata.
@@ -81,9 +83,11 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
     preset !== "standard" &&
     (input.cancellationType === "insured" || input.cancellationType === "nonPayment");
 
-  const cancellationReturnFactor = appliesShortRate
-    ? roundFactor(SHORT_RATE_PENALTY * proRataFactor)
-    : proRataFactor;
+  // Round only the FINAL cancellation factor, computed from the full-precision
+  // pro-rata factor (single round, not a pre-rounded pro-rata factor).
+  const cancellationReturnFactor = roundFactor(
+    appliesShortRate ? SHORT_RATE_PENALTY * proRataFactorExact : proRataFactorExact
+  );
 
   // Earned premium computed two ways; the carrier keeps the GREATER (so the
   // minimum earned premium acts as a floor). Fully earned charges (e.g. terrorism
