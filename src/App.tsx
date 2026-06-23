@@ -7,7 +7,8 @@ import {
 import type {
   CancellationType,
   CalculationPreset,
-  CalculationResult
+  CalculationResult,
+  TriaTier
 } from "./lib/calculations";
 
 const DISCLAIMER =
@@ -22,6 +23,7 @@ interface FormState {
   cancellationType: CancellationType;
   fullyEarnedCharges: string;
   preset: CalculationPreset;
+  triaTier: TriaTier;
 }
 
 const initialFormState: FormState = {
@@ -32,7 +34,8 @@ const initialFormState: FormState = {
   minimumEarnedPremiumPercent: "25",
   cancellationType: "insured",
   fullyEarnedCharges: "0",
-  preset: "minimumPremiumEndorsement"
+  preset: "minimumPremiumEndorsement",
+  triaTier: "none"
 };
 
 type FieldErrors = Partial<Record<keyof FormState, string>>;
@@ -114,7 +117,8 @@ function App() {
         minimumEarnedPremiumPercent: parseAmount(form.minimumEarnedPremiumPercent),
         cancellationType: form.cancellationType,
         fullyEarnedCharges: parseAmount(form.fullyEarnedCharges),
-        preset: form.preset
+        preset: form.preset,
+        triaTier: form.triaTier
       });
 
       return { result, note: buildCalculationNote(result), error: null as string | null };
@@ -282,6 +286,23 @@ function App() {
                 onChange={(event) => setField("fullyEarnedCharges", event.target.value)}
               />
             </Field>
+
+            <Field
+              label="TRIA (terrorism) tier"
+              htmlFor="tria-tier"
+              hint="Tier rate × premium, fully earned. Pick the tier for the venue."
+            >
+              <select
+                id="tria-tier"
+                value={form.triaTier}
+                onChange={(event) => setField("triaTier", event.target.value as TriaTier)}
+              >
+                <option value="none">No TRIA</option>
+                <option value="tier1">Tier 1 — 10%</option>
+                <option value="tier2">Tier 2 — 5%</option>
+                <option value="tier3">Tier 3 — 3%</option>
+              </select>
+            </Field>
           </div>
         </form>
 
@@ -328,6 +349,12 @@ function App() {
                   <dt>Fully earned charges</dt>
                   <dd>{formatCurrency(result.fullyEarnedChargesRetained)}</dd>
                 </div>
+                {result.triaAmount > 0 ? (
+                  <div>
+                    <dt>TRIA ({triaTierLabel(result.triaTier)})</dt>
+                    <dd>{formatCurrency(result.triaAmount)}</dd>
+                  </div>
+                ) : null}
               </dl>
 
               <div className="result-summary">
@@ -396,6 +423,13 @@ function App() {
                       label="Fully earned charges retained"
                       value={formatCurrency(result.fullyEarnedChargesRetained)}
                       note="kept in full, never returned"
+                    />
+                  ) : null}
+                  {result.triaAmount > 0 ? (
+                    <Step
+                      label={`TRIA retained (${triaTierLabel(result.triaTier)})`}
+                      value={formatCurrency(result.triaAmount)}
+                      note="fully earned, never returned"
                     />
                   ) : null}
                   <Step
@@ -502,6 +536,13 @@ function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function triaTierLabel(tier: TriaTier): string {
+  if (tier === "tier1") return "Tier 1, 10%";
+  if (tier === "tier2") return "Tier 2, 5%";
+  if (tier === "tier3") return "Tier 3, 3%";
+  return "none";
+}
+
 function buildSummaryText(form: FormState, result: CalculationResult): string {
   return [
     "E&S Return Premium — Summary",
@@ -514,6 +555,9 @@ function buildSummaryText(form: FormState, result: CalculationResult): string {
     `Deposit premium: ${formatCurrency(result.depositPremium)}`,
     `Minimum earned premium: ${result.minimumEarnedPremiumPercent}%`,
     `Fully earned charges (retained): ${formatCurrency(result.fullyEarnedChargesRetained)}`,
+    ...(result.triaAmount > 0
+      ? [`TRIA (${triaTierLabel(result.triaTier)}, retained): ${formatCurrency(result.triaAmount)}`]
+      : []),
     "",
     `Pro-rata factor: ${result.proRataFactor}`,
     `Cancellation return factor: ${result.cancellationReturnFactor}`,

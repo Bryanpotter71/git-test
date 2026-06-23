@@ -6,6 +6,9 @@ export type CancellationType = "insured" | "nonPayment" | "company";
 // "standard" = straight pro rata for every cancellation type (no short-rate penalty).
 export type CalculationPreset = "standard" | "minimumPremiumEndorsement";
 
+// Terrorism (TRIA) premium tier. Rates only — no venue/location list lives in this repo.
+export type TriaTier = "none" | "tier1" | "tier2" | "tier3";
+
 export interface CalculationInput {
   policyEffectiveDate: string;
   policyExpirationDate: string;
@@ -15,6 +18,7 @@ export interface CalculationInput {
   fullyEarnedCharges?: number;
   minimumEarnedPremiumPercent?: number;
   preset?: CalculationPreset;
+  triaTier?: TriaTier;
 }
 
 export interface CalculationResult {
@@ -28,6 +32,9 @@ export interface CalculationResult {
   cancellationReturnFactor: number; // factor applied before the minimum-earned floor
   depositPremium: number;
   fullyEarnedChargesRetained: number;
+  triaTier: TriaTier;
+  triaRate: number; // 0.10 / 0.05 / 0.03 / 0
+  triaAmount: number; // depositPremium * triaRate (fully earned, never returned)
   proRataReturnPremium: number; // depositPremium * proRataFactor
   minimumEarnedPremiumPercent: number;
   minimumEarnedPremiumAmount: number; // depositPremium * mep% (premium earned under MEP)
@@ -48,6 +55,15 @@ const FACTOR_DECIMALS: number | null = 3;
 
 // Short-rate return factor = SHORT_RATE_PENALTY * pro rata factor.
 const SHORT_RATE_PENALTY = 0.9;
+
+// Terrorism (TRIA) premium rate by venue tier. Tier selection only — the
+// venue-to-tier mapping is intentionally kept out of this repo.
+const TRIA_RATES: Record<TriaTier, number> = {
+  none: 0,
+  tier1: 0.1,
+  tier2: 0.05,
+  tier3: 0.03
+};
 
 export function calculateReturnPremium(input: CalculationInput): CalculationResult {
   const depositPremium = normalizeMoney(input.depositPremium, "Deposit premium");
@@ -89,19 +105,26 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
     appliesShortRate ? SHORT_RATE_PENALTY * proRataFactorExact : proRataFactorExact
   );
 
+  // Terrorism (TRIA) premium: a tier rate applied to the deposit premium.
+  // Fully earned — retained in full, never returned.
+  const triaTier = input.triaTier ?? "none";
+  const triaRate = TRIA_RATES[triaTier];
+  const triaAmount = roundCurrency(depositPremium * triaRate);
+  const retainedFullyEarned = fullyEarnedChargesRetained + triaAmount;
+
   // Earned premium computed two ways; the carrier keeps the GREATER (so the
-  // minimum earned premium acts as a floor). Fully earned charges (e.g. terrorism
-  // premium) are added to both sides — they are always earned and never returned.
+  // minimum earned premium acts as a floor). Fully earned charges (fees, TRIA)
+  // are added to both sides — always earned and never returned.
   const mepFraction = minimumEarnedPremiumPercent / 100;
   const earnedFromCancellation = roundCurrency(
-    depositPremium * (1 - cancellationReturnFactor) + fullyEarnedChargesRetained
+    depositPremium * (1 - cancellationReturnFactor) + retainedFullyEarned
   );
   const earnedFromMinimum = roundCurrency(
-    depositPremium * mepFraction + fullyEarnedChargesRetained
+    depositPremium * mepFraction + retainedFullyEarned
   );
   const earnedPremium = Math.max(earnedFromCancellation, earnedFromMinimum);
 
-  const totalCollected = depositPremium + fullyEarnedChargesRetained;
+  const totalCollected = depositPremium + retainedFullyEarned;
   const finalReturnPremium = roundCurrency(Math.max(0, totalCollected - earnedPremium));
 
   return {
@@ -115,6 +138,9 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
     cancellationReturnFactor,
     depositPremium,
     fullyEarnedChargesRetained,
+    triaTier,
+    triaRate,
+    triaAmount,
     proRataReturnPremium: roundCurrency(depositPremium * proRataFactor),
     minimumEarnedPremiumPercent,
     minimumEarnedPremiumAmount: roundCurrency(depositPremium * mepFraction),

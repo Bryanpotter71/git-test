@@ -136,6 +136,40 @@ describe("pro rata method", () => {
   });
 });
 
+describe("TRIA premium", () => {
+  it("computes TRIA from the tier rate and retains it (return premium unchanged)", () => {
+    const base = {
+      policyEffectiveDate: "2026-01-01",
+      policyExpirationDate: "2027-01-01",
+      cancellationEffectiveDate: "2026-07-01",
+      depositPremium: 10000,
+      minimumEarnedPremiumPercent: 0,
+      cancellationType: "insured" as const
+    };
+    const noTria = calculateReturnPremium(base);
+    const tier1 = calculateReturnPremium({ ...base, triaTier: "tier1" });
+
+    expect(tier1.triaRate).toBe(0.1);
+    expect(tier1.triaAmount).toBe(1000); // 10000 * 0.10
+    // Fully earned: TRIA raises earned/retained but not the premium returned.
+    expect(tier1.finalReturnPremium).toBe(noTria.finalReturnPremium);
+    expect(tier1.earnedPremium).toBe(noTria.earnedPremium + 1000);
+  });
+
+  it("uses tier 2 (5%) and tier 3 (3%) rates", () => {
+    const base = {
+      policyEffectiveDate: "2026-01-01",
+      policyExpirationDate: "2027-01-01",
+      cancellationEffectiveDate: "2026-07-01",
+      depositPremium: 10000,
+      cancellationType: "company" as const
+    };
+
+    expect(calculateReturnPremium({ ...base, triaTier: "tier2" }).triaAmount).toBe(500);
+    expect(calculateReturnPremium({ ...base, triaTier: "tier3" }).triaAmount).toBe(300);
+  });
+});
+
 describe("fully earned charges", () => {
   it("retains fully earned charges and never returns them", () => {
     const withCharge = calculateReturnPremium({
