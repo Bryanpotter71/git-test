@@ -32,7 +32,8 @@ export interface CalculationResult {
   minimumEarnedPremiumPercent: number;
   retainedViaFactor: number; // risk premium - gross return
   retainedViaMinimum: number; // risk premium * mep%
-  minimumBinds: boolean; // true when minimum earned premium retains more (smaller return)
+  minimumApplies: boolean; // true only on the short-rate (insured / non-payment) path
+  minimumBinds: boolean; // true when the minimum earned premium retains more (smaller return)
   finalReturnPremium: number; // rounded to the nearest whole dollar
   triaTier: TriaTier;
   triaRate: number;
@@ -86,13 +87,18 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
     (input.cancellationType === "insured" || input.cancellationType === "nonPayment");
   const cancellationReturnFactor = appliesShortRate ? shortRateFactor : proRataFactor;
 
-  // Return = risk premium * applicable factor. Minimum earned premium binds only when
-  // it retains MORE than the cancellation factor (i.e. produces a smaller return).
+  // Return = risk premium * applicable factor. The minimum earned premium applies ONLY
+  // on the short-rate (insured / non-payment) path; carrier cancellations and straight
+  // pro-rata return full pro-rata with no cap. When it applies, it binds only if it
+  // retains MORE than the cancellation factor (i.e. produces a smaller return).
   const mepFraction = minimumEarnedPremiumPercent / 100;
   const grossReturnRaw = depositPremium * cancellationReturnFactor;
   const minimumReturnRaw = depositPremium * (1 - mepFraction);
-  const minimumBinds = minimumReturnRaw < grossReturnRaw;
-  const finalReturnPremium = roundToDollar(Math.max(0, Math.min(grossReturnRaw, minimumReturnRaw)));
+  const minimumApplies = appliesShortRate;
+  const minimumBinds = minimumApplies && minimumReturnRaw < grossReturnRaw;
+  const finalReturnPremium = roundToDollar(
+    Math.max(0, minimumBinds ? minimumReturnRaw : grossReturnRaw)
+  );
 
   // TRIA + fees are informational only — they never feed the return math.
   const triaTier = input.triaTier ?? "none";
@@ -113,6 +119,7 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
     minimumEarnedPremiumPercent,
     retainedViaFactor: roundToDollar(depositPremium - grossReturnRaw),
     retainedViaMinimum: roundToDollar(depositPremium * mepFraction),
+    minimumApplies,
     minimumBinds,
     finalReturnPremium,
     triaTier,
@@ -180,16 +187,16 @@ export function buildCalculationNote(result: CalculationResult): string {
     nonPayment: "non-payment cancellation",
     company: "company cancellation"
   };
-  const controls = result.minimumBinds
-    ? "minimum earned premium controls"
-    : "cancellation factor controls";
+  const minimumLine = result.minimumApplies
+    ? `Retained via factor ${formatCurrency(result.retainedViaFactor)} vs retained via minimum (${result.minimumEarnedPremiumPercent}%) ${formatCurrency(result.retainedViaMinimum)} — ${result.minimumBinds ? "minimum earned premium controls" : "cancellation factor controls"}.`
+    : "Full pro-rata — minimum earned premium not applied.";
 
   return [
     `Method: ${method} (${cancellationTypeLabel[result.cancellationType]}).`,
     `Day count: ${result.earnedDays} earned / ${result.unearnedDays} unearned of ${result.totalPolicyDays} total days.`,
     `Applicable factor ${result.cancellationReturnFactor} (truncated to 3 decimals).`,
     `Gross return ${formatCurrency(result.grossReturn)} = risk premium × factor.`,
-    `Retained via factor ${formatCurrency(result.retainedViaFactor)} vs retained via minimum (${result.minimumEarnedPremiumPercent}%) ${formatCurrency(result.retainedViaMinimum)} — ${controls}.`,
+    minimumLine,
     result.triaAmount > 0
       ? `TRIA retained (informational only, excluded from the return): ${formatCurrency(result.triaAmount)}.`
       : "",

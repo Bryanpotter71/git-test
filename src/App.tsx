@@ -413,24 +413,34 @@ function App() {
                     label="Gross return (base × factor)"
                     value={formatCurrency(result.grossReturn)}
                   />
-                  <Step
-                    label="Retained via factor"
-                    value={formatCurrency(result.retainedViaFactor)}
-                  />
-                  <Step
-                    label={`Retained via minimum (${result.minimumEarnedPremiumPercent}%)`}
-                    value={formatCurrency(result.retainedViaMinimum)}
-                  />
-                  <Step
-                    label="Controls"
-                    value={result.minimumBinds ? "Minimum earned" : "Cancellation factor"}
-                    note={
-                      result.minimumBinds
-                        ? "minimum earned premium retains more"
-                        : "cancellation factor retains more"
-                    }
-                    highlight
-                  />
+                  {result.minimumApplies ? (
+                    <>
+                      <Step
+                        label="Retained via factor"
+                        value={formatCurrency(result.retainedViaFactor)}
+                      />
+                      <Step
+                        label={`Retained via minimum (${result.minimumEarnedPremiumPercent}%)`}
+                        value={formatCurrency(result.retainedViaMinimum)}
+                      />
+                      <Step
+                        label="Controls"
+                        value={result.minimumBinds ? "Minimum earned" : "Cancellation factor"}
+                        note={
+                          result.minimumBinds
+                            ? "minimum earned premium retains more"
+                            : "cancellation factor retains more"
+                        }
+                        highlight
+                      />
+                    </>
+                  ) : (
+                    <Step
+                      label="Minimum earned"
+                      value="Not applied"
+                      note="full pro-rata — no cap on a carrier cancellation"
+                    />
+                  )}
                   {result.triaAmount > 0 ? (
                     <Step
                       label={`TRIA retained (${triaTierLabel(result.triaTier)})`}
@@ -540,6 +550,7 @@ function cancellationTypeLabel(type: CancellationType): string {
 }
 
 function controlsLabel(result: CalculationResult): string {
+  if (!result.minimumApplies) return "full pro-rata, no minimum earned";
   return result.minimumBinds ? "minimum earned controls" : "cancellation factor controls";
 }
 
@@ -565,11 +576,18 @@ function buildSummaryText(form: FormState, result: CalculationResult): string {
     `Cancellation effective: ${form.cancellationEffectiveDate}`,
     `Risk premium (in-force at cancellation): ${formatCurrency(result.depositPremium)}`,
     `Applicable factor (truncated 3 dp): ${result.cancellationReturnFactor}`,
-    `Gross return (base × factor): ${formatCurrency(result.grossReturn)}`,
-    `Minimum earned premium: ${result.minimumEarnedPremiumPercent}%`,
-    `Retained via factor: ${formatCurrency(result.retainedViaFactor)}`,
-    `Retained via minimum: ${formatCurrency(result.retainedViaMinimum)}`
+    `Gross return (base × factor): ${formatCurrency(result.grossReturn)}`
   ];
+
+  if (result.minimumApplies) {
+    lines.push(
+      `Minimum earned premium: ${result.minimumEarnedPremiumPercent}%`,
+      `Retained via factor: ${formatCurrency(result.retainedViaFactor)}`,
+      `Retained via minimum: ${formatCurrency(result.retainedViaMinimum)}`
+    );
+  } else {
+    lines.push("Minimum earned premium: not applied (full pro-rata)");
+  }
 
   if (result.triaAmount > 0) {
     lines.push(`TRIA retained (display only, excluded): ${formatCurrency(result.triaAmount)}`);

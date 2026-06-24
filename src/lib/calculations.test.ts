@@ -93,22 +93,42 @@ describe("regression examples (tie to the dollar)", () => {
     expect(result.finalReturnPremium).toBe(24874);
   });
 
-  it("Example D — minimum earned floor binds", () => {
+  it("Example D1 — insured short rate, minimum earned binds (early cancel)", () => {
+    const result = calculateReturnPremium({
+      policyEffectiveDate: "2026-01-01",
+      policyExpirationDate: "2027-01-01",
+      cancellationEffectiveDate: "2026-02-01",
+      depositPremium: 40000,
+      cancellationType: "insured",
+      preset: "minimumPremiumEndorsement",
+      minimumEarnedPremiumPercent: 25
+    });
+
+    expect(result.unearnedDays).toBe(334);
+    expect(result.appliesShortRate).toBe(true);
+    expect(result.cancellationReturnFactor).toBe(0.823); // truncate(0.9 * 334/365)
+    expect(result.minimumApplies).toBe(true);
+    expect(result.minimumBinds).toBe(true); // 30000 < 40000 * 0.823 (32920)
+    expect(result.retainedViaMinimum).toBe(10000); // 40000 * 0.25
+    expect(result.finalReturnPremium).toBe(30000); // capped at 75% of deposit
+  });
+
+  it("Example D2 — carrier cancel, full pro-rata, no minimum cap", () => {
     const result = calculateReturnPremium({
       policyEffectiveDate: "2026-01-01",
       policyExpirationDate: "2027-01-01",
       cancellationEffectiveDate: "2026-02-01",
       depositPremium: 40000,
       cancellationType: "company",
-      preset: "standard",
-      minimumEarnedPremiumPercent: 25
+      minimumEarnedPremiumPercent: 25 // present, but must NOT cap a carrier cancellation
     });
 
     expect(result.unearnedDays).toBe(334);
-    expect(result.proRataFactor).toBe(0.915);
-    expect(result.minimumBinds).toBe(true);
-    expect(result.retainedViaMinimum).toBe(10000); // 40000 * 0.25
-    expect(result.finalReturnPremium).toBe(30000); // 40000 - 10000
+    expect(result.appliesShortRate).toBe(false);
+    expect(result.cancellationReturnFactor).toBe(0.915); // truncate(334/365)
+    expect(result.minimumApplies).toBe(false);
+    expect(result.minimumBinds).toBe(false);
+    expect(result.finalReturnPremium).toBe(36600); // full pro-rata, no cap
   });
 });
 
