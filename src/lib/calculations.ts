@@ -1,9 +1,6 @@
 export type CancellationType = "insured" | "nonPayment" | "company";
 
-// Kept for backward compatibility with the existing UI controls.
-// "minimumPremiumEndorsement" = standard short-rate method (0.9 penalty on
-//   insured / non-payment cancellations).
-// "standard" = straight pro rata for every cancellation type (no short-rate penalty).
+// "minimumPremiumEndorsement" = short rate (0.9 x pro rata). "standard" = straight pro rata.
 export type CalculationPreset = "standard" | "minimumPremiumEndorsement";
 
 // Terrorism (TRIA) premium tier. Rates only — no venue/location list lives in this repo.
@@ -13,47 +10,40 @@ export interface CalculationInput {
   policyEffectiveDate: string;
   policyExpirationDate: string;
   cancellationEffectiveDate: string;
-  depositPremium: number;
+  depositPremium: number; // in-force risk premium at the cancellation date
   cancellationType: CancellationType;
-  fullyEarnedCharges?: number;
   minimumEarnedPremiumPercent?: number;
   preset?: CalculationPreset;
   triaTier?: TriaTier;
+  fullyEarnedCharges?: number; // fees — excluded from the return by default
 }
 
 export interface CalculationResult {
   totalPolicyDays: number;
   earnedDays: number;
   unearnedDays: number;
-  proRataFactor: number;
-  unearnedFactor: number; // alias of proRataFactor (existing UI field)
+  proRataFactor: number; // truncated to 3 decimals
+  shortRateFactor: number; // truncated to 3 decimals
   appliesShortRate: boolean;
-  shortRatePenalty: number;
-  cancellationReturnFactor: number; // factor applied before the minimum-earned floor
-  depositPremium: number;
-  fullyEarnedChargesRetained: number;
-  triaTier: TriaTier;
-  triaRate: number; // 0.10 / 0.05 / 0.03 / 0
-  triaAmount: number; // depositPremium * triaRate (fully earned, never returned)
-  proRataReturnPremium: number; // depositPremium * proRataFactor
+  cancellationReturnFactor: number; // the applicable factor used (truncated)
+  unearnedFactor: number; // alias of proRataFactor (existing UI field)
+  depositPremium: number; // risk / base premium
+  grossReturn: number; // round_to_dollar(risk premium * applicable factor)
   minimumEarnedPremiumPercent: number;
-  minimumEarnedPremiumAmount: number; // depositPremium * mep% (premium earned under MEP)
-  earnedFromCancellation: number; // total earned via the cancellation factor (incl. fully earned charges)
-  earnedFromMinimum: number; // total earned via the minimum earned premium (incl. fully earned charges)
-  earnedPremium: number; // the greater of the two earned amounts — what the carrier keeps
-  returnPremiumBeforeCharges: number; // depositPremium * cancellationReturnFactor (before MEP floor)
-  finalReturnPremium: number; // actual premium returned
-  preset: CalculationPreset;
+  retainedViaFactor: number; // risk premium - gross return
+  retainedViaMinimum: number; // risk premium * mep%
+  minimumBinds: boolean; // true when minimum earned premium retains more (smaller return)
+  finalReturnPremium: number; // rounded to the nearest whole dollar
+  triaTier: TriaTier;
+  triaRate: number;
+  triaAmount: number; // display only — never part of the return
+  fullyEarnedChargesRetained: number; // fees — display only, excluded from the return
   cancellationType: CancellationType;
+  preset: CalculationPreset;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-// The final cancellation factor is rounded to 3 decimals, computed from the
-// full-precision pro-rata factor (e.g. 0.9 * 154/365 = 0.3797... -> 0.380).
-const FACTOR_DECIMALS: number | null = 3;
-
-// Short-rate return factor = SHORT_RATE_PENALTY * pro rata factor.
+const FACTOR_DECIMALS = 3;
 const SHORT_RATE_PENALTY = 0.9;
 
 // Terrorism (TRIA) premium rate by venue tier. Tier selection only — the
@@ -66,11 +56,8 @@ const TRIA_RATES: Record<TriaTier, number> = {
 };
 
 export function calculateReturnPremium(input: CalculationInput): CalculationResult {
-  const depositPremium = normalizeMoney(input.depositPremium, "Deposit premium");
-  const fullyEarnedChargesRetained = normalizeMoney(
-    input.fullyEarnedCharges ?? 0,
-    "Fully earned charges"
-  );
+  const depositPremium = normalizeMoney(input.depositPremium, "Risk premium");
+  const fullyEarnedChargesRetained = normalizeMoney(input.fullyEarnedCharges ?? 0, "Fees");
   const minimumEarnedPremiumPercent = normalizePercent(
     input.minimumEarnedPremiumPercent ?? 0,
     "Minimum earned premium percentage"
@@ -88,70 +75,69 @@ export function calculateReturnPremium(input: CalculationInput): CalculationResu
   );
   const unearnedDays = totalPolicyDays - earnedDays;
 
-  // Pro-rata factor at full precision (cancellation effective date is unearned,
-  // based on actual policy term days). Rounded separately for display only.
-  const proRataFactorExact = unearnedDays / totalPolicyDays;
-  const proRataFactor = roundFactor(proRataFactorExact);
+  // Raw unearned ratio. Factors are TRUNCATED (floored) to 3 decimals — never rounded
+  // half-up. Short rate uses the RAW ratio (not the displayed pro-rata factor) x 0.9.
+  const unearnedRatio = unearnedDays / totalPolicyDays;
+  const proRataFactor = truncateFactor(unearnedRatio, FACTOR_DECIMALS);
+  const shortRateFactor = truncateFactor(SHORT_RATE_PENALTY * unearnedRatio, FACTOR_DECIMALS);
 
-  // Short rate applies the 0.9 penalty on insured / non-payment cancellations.
-  // Company (carrier) cancellations and the "standard" preset use straight pro rata.
   const appliesShortRate =
     preset !== "standard" &&
     (input.cancellationType === "insured" || input.cancellationType === "nonPayment");
+  const cancellationReturnFactor = appliesShortRate ? shortRateFactor : proRataFactor;
 
-  // Round only the FINAL cancellation factor, computed from the full-precision
-  // pro-rata factor (single round, not a pre-rounded pro-rata factor).
-  const cancellationReturnFactor = roundFactor(
-    appliesShortRate ? SHORT_RATE_PENALTY * proRataFactorExact : proRataFactorExact
-  );
+  // Return = risk premium * applicable factor. Minimum earned premium binds only when
+  // it retains MORE than the cancellation factor (i.e. produces a smaller return).
+  const mepFraction = minimumEarnedPremiumPercent / 100;
+  const grossReturnRaw = depositPremium * cancellationReturnFactor;
+  const minimumReturnRaw = depositPremium * (1 - mepFraction);
+  const minimumBinds = minimumReturnRaw < grossReturnRaw;
+  const finalReturnPremium = roundToDollar(Math.max(0, Math.min(grossReturnRaw, minimumReturnRaw)));
 
-  // Terrorism (TRIA) premium: a tier rate applied to the deposit premium.
-  // Fully earned — retained in full, never returned.
+  // TRIA + fees are informational only — they never feed the return math.
   const triaTier = input.triaTier ?? "none";
   const triaRate = TRIA_RATES[triaTier];
-  const triaAmount = roundCurrency(depositPremium * triaRate);
-  const retainedFullyEarned = fullyEarnedChargesRetained + triaAmount;
-
-  // Earned premium computed two ways; the carrier keeps the GREATER (so the
-  // minimum earned premium acts as a floor). Fully earned charges (fees, TRIA)
-  // are added to both sides — always earned and never returned.
-  const mepFraction = minimumEarnedPremiumPercent / 100;
-  const earnedFromCancellation = roundCurrency(
-    depositPremium * (1 - cancellationReturnFactor) + retainedFullyEarned
-  );
-  const earnedFromMinimum = roundCurrency(
-    depositPremium * mepFraction + retainedFullyEarned
-  );
-  const earnedPremium = Math.max(earnedFromCancellation, earnedFromMinimum);
-
-  const totalCollected = depositPremium + retainedFullyEarned;
-  const finalReturnPremium = roundCurrency(Math.max(0, totalCollected - earnedPremium));
+  const triaAmount = roundToDollar(depositPremium * triaRate);
 
   return {
     totalPolicyDays,
     earnedDays,
     unearnedDays,
     proRataFactor,
-    unearnedFactor: proRataFactor,
+    shortRateFactor,
     appliesShortRate,
-    shortRatePenalty: SHORT_RATE_PENALTY,
     cancellationReturnFactor,
+    unearnedFactor: proRataFactor,
     depositPremium,
-    fullyEarnedChargesRetained,
+    grossReturn: roundToDollar(grossReturnRaw),
+    minimumEarnedPremiumPercent,
+    retainedViaFactor: roundToDollar(depositPremium - grossReturnRaw),
+    retainedViaMinimum: roundToDollar(depositPremium * mepFraction),
+    minimumBinds,
+    finalReturnPremium,
     triaTier,
     triaRate,
     triaAmount,
-    proRataReturnPremium: roundCurrency(depositPremium * proRataFactor),
-    minimumEarnedPremiumPercent,
-    minimumEarnedPremiumAmount: roundCurrency(depositPremium * mepFraction),
-    earnedFromCancellation,
-    earnedFromMinimum,
-    earnedPremium,
-    returnPremiumBeforeCharges: roundCurrency(depositPremium * cancellationReturnFactor),
-    finalReturnPremium,
-    preset,
-    cancellationType: input.cancellationType
+    fullyEarnedChargesRetained,
+    cancellationType: input.cancellationType,
+    preset
   };
+}
+
+// Truncate (floor) a positive factor to N decimals. Float noise is cleaned first so a
+// value that should sit exactly on a boundary (e.g. 0.641) is not pushed down to 0.640.
+export function truncateFactor(value: number, decimals: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  const multiplier = 10 ** decimals;
+  const scaled = Math.round(value * multiplier * 1e6) / 1e6;
+  return Math.floor(scaled) / multiplier;
+}
+
+export function roundToDollar(value: number): number {
+  return Math.round(value);
 }
 
 export function differenceInPolicyDays(startDate: string, endDate: string): number {
@@ -187,41 +173,30 @@ export function calculateEarnedDays(
   return earnedDays;
 }
 
-export function roundCurrency(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-export function roundFactor(value: number): number {
-  if (FACTOR_DECIMALS === null) {
-    return value;
-  }
-
-  const multiplier = 10 ** FACTOR_DECIMALS;
-  return Math.round((value + Number.EPSILON) * multiplier) / multiplier;
-}
-
 export function buildCalculationNote(result: CalculationResult): string {
-  const method = result.appliesShortRate
-    ? `Short rate (${result.shortRatePenalty} × pro rata)`
-    : "Pro rata";
+  const method = result.appliesShortRate ? "short rate (0.9 × pro rata)" : "straight pro rata";
   const cancellationTypeLabel: Record<CancellationType, string> = {
     insured: "insured cancellation",
     nonPayment: "non-payment cancellation",
     company: "company cancellation"
   };
-  const earnedBasis =
-    result.earnedFromMinimum > result.earnedFromCancellation
-      ? "minimum earned premium controls"
-      : "cancellation factor controls";
+  const controls = result.minimumBinds
+    ? "minimum earned premium controls"
+    : "cancellation factor controls";
 
   return [
-    `Method: ${method}.`,
-    `Cancellation type: ${cancellationTypeLabel[result.cancellationType]}.`,
+    `Method: ${method} (${cancellationTypeLabel[result.cancellationType]}).`,
     `Day count: ${result.earnedDays} earned / ${result.unearnedDays} unearned of ${result.totalPolicyDays} total days.`,
-    `Pro rata factor ${result.proRataFactor}; cancellation return factor ${result.cancellationReturnFactor}.`,
-    `Earned via cancellation ${formatCurrency(result.earnedFromCancellation)} vs earned via minimum ${formatCurrency(result.earnedFromMinimum)} — ${earnedBasis}.`,
+    `Applicable factor ${result.cancellationReturnFactor} (truncated to 3 decimals).`,
+    `Gross return ${formatCurrency(result.grossReturn)} = risk premium × factor.`,
+    `Retained via factor ${formatCurrency(result.retainedViaFactor)} vs retained via minimum (${result.minimumEarnedPremiumPercent}%) ${formatCurrency(result.retainedViaMinimum)} — ${controls}.`,
+    result.triaAmount > 0
+      ? `TRIA retained (informational only, excluded from the return): ${formatCurrency(result.triaAmount)}.`
+      : "",
     `Estimated return premium: ${formatCurrency(result.finalReturnPremium)}.`
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export function formatCurrency(value: number): string {

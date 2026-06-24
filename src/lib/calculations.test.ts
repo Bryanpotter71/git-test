@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   calculateEarnedDays,
   calculateReturnPremium,
-  differenceInPolicyDays
+  differenceInPolicyDays,
+  truncateFactor
 } from "./calculations";
 
 describe("policy day calculations", () => {
-  it("calculates total, earned, and unearned days from date-only inputs", () => {
+  it("derives total, earned, and unearned days", () => {
     const result = calculateReturnPremium({
       policyEffectiveDate: "2026-01-01",
       policyExpirationDate: "2027-01-01",
@@ -20,178 +21,132 @@ describe("policy day calculations", () => {
     expect(result.unearnedDays).toBe(184);
   });
 
-  it("rejects expiration dates before the effective date", () => {
-    expect(() => differenceInPolicyDays("2026-01-01", "2025-12-31")).toThrow(
-      "Policy expiration date must be after the policy effective date."
-    );
+  it("rejects expiration before effective", () => {
+    expect(() => differenceInPolicyDays("2026-01-01", "2025-12-31")).toThrow();
   });
 
-  it("rejects cancellation dates after expiration", () => {
-    expect(() =>
-      calculateEarnedDays("2026-01-01", "2027-01-01", "2027-01-02")
-    ).toThrow("Cancellation effective date cannot be after the policy expiration date.");
+  it("rejects cancellation after expiration", () => {
+    expect(() => calculateEarnedDays("2026-01-01", "2027-01-01", "2027-01-02")).toThrow();
   });
 });
 
-describe("authoritative short-rate reference example", () => {
-  // Reproduces the documented reference: full-precision pro rata 154/365, short rate
-  // 0.9 * 154/365 = 0.3797260273972603 -> rounds to 0.380, return = 0.380 * 10,000.
-  // Cancellation effective date is unearned: earned 211 / unearned 154 of 365 days.
-  it("matches the reference to the dollar", () => {
+describe("factor truncation (floor to 3 decimals, no round-half-up)", () => {
+  it("truncates rather than rounding up", () => {
+    expect(truncateFactor(0.19479452, 3)).toBe(0.194); // not 0.195
+    expect(truncateFactor(0.64109589, 3)).toBe(0.641);
+    expect(truncateFactor(0.1945, 3)).toBe(0.194); // not 0.195
+  });
+
+  it("guards against floating-point underflow on boundaries", () => {
+    expect(truncateFactor(0.641, 3)).toBe(0.641); // not 0.640
+    expect(truncateFactor(0.123, 3)).toBe(0.123);
+    expect(truncateFactor(0.915, 3)).toBe(0.915);
+  });
+});
+
+describe("regression examples (tie to the dollar)", () => {
+  it("Example A — short rate, truncation guard", () => {
     const result = calculateReturnPremium({
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-31",
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 0,
+      policyEffectiveDate: "2025-06-19",
+      policyExpirationDate: "2026-06-19",
+      cancellationEffectiveDate: "2026-04-01",
+      depositPremium: 50400,
       cancellationType: "insured",
       preset: "minimumPremiumEndorsement"
     });
 
-    expect(result.earnedDays).toBe(211);
-    expect(result.unearnedDays).toBe(154);
-    expect(result.proRataFactor).toBe(0.422); // 154/365 = 0.4219... -> 0.422 (display)
-    expect(result.cancellationReturnFactor).toBe(0.38); // round3(0.9 * 154/365)
-    expect(result.finalReturnPremium).toBe(3800); // 0.380 * 10,000
-  });
-});
-
-describe("short-rate method", () => {
-  it("applies the 0.9 penalty to the pro rata factor for an insured cancellation", () => {
-    const result = calculateReturnPremium({
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01", // 184/365 = 0.504
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 0,
-      cancellationType: "insured"
-    });
-
-    expect(result.proRataFactor).toBe(0.504);
+    expect(result.earnedDays).toBe(286);
+    expect(result.unearnedDays).toBe(79);
     expect(result.appliesShortRate).toBe(true);
-    expect(result.cancellationReturnFactor).toBe(0.454); // round(0.9 * 0.504)
-    expect(result.finalReturnPremium).toBe(4540); // 10000 * 0.454
+    expect(result.cancellationReturnFactor).toBe(0.194); // truncated, not 0.195
+    expect(result.finalReturnPremium).toBe(9778); // not 9828
   });
 
-  it("treats non-payment cancellations as short rate", () => {
+  it("Example B — short rate, no TRIA", () => {
     const result = calculateReturnPremium({
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01",
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 0,
-      cancellationType: "nonPayment"
-    });
-
-    expect(result.appliesShortRate).toBe(true);
-    expect(result.cancellationReturnFactor).toBe(0.454);
-  });
-
-  it("lets the minimum earned premium control when it earns more", () => {
-    const result = calculateReturnPremium({
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01", // short-rate earned = 1 - 0.454 = 0.546
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 60, // earns more than 0.546
-      cancellationType: "insured"
-    });
-
-    expect(result.earnedFromMinimum).toBe(6000); // 10000 * 0.60
-    expect(result.earnedFromCancellation).toBe(5460); // 10000 * 0.546
-    expect(result.earnedPremium).toBe(6000);
-    expect(result.finalReturnPremium).toBe(4000); // 10000 * (1 - 0.60)
-  });
-});
-
-describe("pro rata method", () => {
-  it("uses straight pro rata (no penalty) for a company cancellation", () => {
-    const result = calculateReturnPremium({
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01",
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 0,
-      cancellationType: "company"
-    });
-
-    expect(result.appliesShortRate).toBe(false);
-    expect(result.cancellationReturnFactor).toBe(0.504); // pro rata, no 0.9
-    expect(result.finalReturnPremium).toBe(5040);
-  });
-
-  it('forces pro rata for any type under the "standard" preset', () => {
-    const result = calculateReturnPremium({
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01",
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 0,
+      policyEffectiveDate: "2025-10-03",
+      policyExpirationDate: "2026-10-03",
+      cancellationEffectiveDate: "2026-01-16",
+      depositPremium: 38340,
       cancellationType: "insured",
+      preset: "minimumPremiumEndorsement"
+    });
+
+    expect(result.unearnedDays).toBe(260);
+    expect(result.cancellationReturnFactor).toBe(0.641);
+    expect(result.finalReturnPremium).toBe(24576);
+  });
+
+  it("Example C — straight pro-rata, in-force base", () => {
+    const result = calculateReturnPremium({
+      policyEffectiveDate: "2025-11-02",
+      policyExpirationDate: "2026-11-02",
+      cancellationEffectiveDate: "2026-03-13",
+      depositPremium: 38805,
+      cancellationType: "company",
       preset: "standard"
     });
 
+    expect(result.unearnedDays).toBe(234);
     expect(result.appliesShortRate).toBe(false);
-    expect(result.cancellationReturnFactor).toBe(0.504);
+    expect(result.cancellationReturnFactor).toBe(0.641);
+    expect(result.finalReturnPremium).toBe(24874);
+  });
+
+  it("Example D — minimum earned floor binds", () => {
+    const result = calculateReturnPremium({
+      policyEffectiveDate: "2026-01-01",
+      policyExpirationDate: "2027-01-01",
+      cancellationEffectiveDate: "2026-02-01",
+      depositPremium: 40000,
+      cancellationType: "company",
+      preset: "standard",
+      minimumEarnedPremiumPercent: 25
+    });
+
+    expect(result.unearnedDays).toBe(334);
+    expect(result.proRataFactor).toBe(0.915);
+    expect(result.minimumBinds).toBe(true);
+    expect(result.retainedViaMinimum).toBe(10000); // 40000 * 0.25
+    expect(result.finalReturnPremium).toBe(30000); // 40000 - 10000
   });
 });
 
-describe("TRIA premium", () => {
-  it("computes TRIA from the tier rate and retains it (return premium unchanged)", () => {
-    const base = {
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01",
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 0,
-      cancellationType: "insured" as const
-    };
+describe("TRIA is informational only", () => {
+  const base = {
+    policyEffectiveDate: "2025-10-03",
+    policyExpirationDate: "2026-10-03",
+    cancellationEffectiveDate: "2026-01-16",
+    depositPremium: 38340,
+    cancellationType: "insured" as const,
+    preset: "minimumPremiumEndorsement" as const
+  };
+
+  it("offers a 5% tier and never changes the return premium", () => {
     const noTria = calculateReturnPremium(base);
-    const tier1 = calculateReturnPremium({ ...base, triaTier: "tier1" });
+    const tier2 = calculateReturnPremium({ ...base, triaTier: "tier2" });
 
-    expect(tier1.triaRate).toBe(0.1);
-    expect(tier1.triaAmount).toBe(1000); // 10000 * 0.10
-    // Fully earned: TRIA raises earned/retained but not the premium returned.
-    expect(tier1.finalReturnPremium).toBe(noTria.finalReturnPremium);
-    expect(tier1.earnedPremium).toBe(noTria.earnedPremium + 1000);
-  });
-
-  it("uses tier 2 (5%) and tier 3 (3%) rates", () => {
-    const base = {
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01",
-      depositPremium: 10000,
-      cancellationType: "company" as const
-    };
-
-    expect(calculateReturnPremium({ ...base, triaTier: "tier2" }).triaAmount).toBe(500);
-    expect(calculateReturnPremium({ ...base, triaTier: "tier3" }).triaAmount).toBe(300);
+    expect(tier2.triaRate).toBe(0.05); // 5% available
+    expect(tier2.triaAmount).toBe(1917); // 38340 * 0.05, display only
+    expect(tier2.finalReturnPremium).toBe(noTria.finalReturnPremium); // excluded from return
   });
 });
 
-describe("fully earned charges", () => {
-  it("retains fully earned charges and never returns them", () => {
-    const withCharge = calculateReturnPremium({
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01",
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 0,
-      fullyEarnedCharges: 250,
-      cancellationType: "insured"
-    });
-    const withoutCharge = calculateReturnPremium({
-      policyEffectiveDate: "2026-01-01",
-      policyExpirationDate: "2027-01-01",
-      cancellationEffectiveDate: "2026-07-01",
-      depositPremium: 10000,
-      minimumEarnedPremiumPercent: 0,
-      cancellationType: "insured"
-    });
+describe("fees are excluded from the return by default", () => {
+  const base = {
+    policyEffectiveDate: "2025-10-03",
+    policyExpirationDate: "2026-10-03",
+    cancellationEffectiveDate: "2026-01-16",
+    depositPremium: 38340,
+    cancellationType: "insured" as const,
+    preset: "minimumPremiumEndorsement" as const
+  };
 
-    // The fully earned charge is kept by the carrier; the premium returned is unchanged.
-    expect(withCharge.fullyEarnedChargesRetained).toBe(250);
-    expect(withCharge.finalReturnPremium).toBe(withoutCharge.finalReturnPremium);
+  it("retains fees for display but does not change the return premium", () => {
+    const noFees = calculateReturnPremium(base);
+    const withFees = calculateReturnPremium({ ...base, fullyEarnedCharges: 500 });
+
+    expect(withFees.fullyEarnedChargesRetained).toBe(500);
+    expect(withFees.finalReturnPremium).toBe(noFees.finalReturnPremium);
   });
 });

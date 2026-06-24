@@ -72,9 +72,9 @@ function validateForm(form: FormState): FieldErrors {
 
   const premium = form.depositPremium.trim();
   if (premium === "") {
-    errors.depositPremium = "Enter the deposit premium.";
+    errors.depositPremium = "Enter the risk premium.";
   } else if (!Number.isFinite(Number(premium)) || Number(premium) < 0) {
-    errors.depositPremium = "Premium must be a non-negative number.";
+    errors.depositPremium = "Risk premium must be a non-negative number.";
   }
 
   const mep = form.minimumEarnedPremiumPercent.trim();
@@ -89,7 +89,7 @@ function validateForm(form: FormState): FieldErrors {
   if (charges !== "") {
     const value = Number(charges);
     if (!Number.isFinite(value) || value < 0) {
-      errors.fullyEarnedCharges = "Charges must be a non-negative number.";
+      errors.fullyEarnedCharges = "Fees must be a non-negative number.";
     }
   }
 
@@ -213,9 +213,14 @@ function App() {
               />
             </Field>
 
-            <Field label="Deposit premium" htmlFor="deposit-premium" error={errors.depositPremium}>
+            <Field
+              label="Risk premium"
+              htmlFor="risk-premium"
+              error={errors.depositPremium}
+              hint="Use in-force risk premium at the cancellation date."
+            >
               <input
-                id="deposit-premium"
+                id="risk-premium"
                 type="number"
                 min="0"
                 step="0.01"
@@ -269,29 +274,7 @@ function App() {
               />
             </Field>
 
-            <Field
-              label="Fully earned charges"
-              htmlFor="fully-earned-charges"
-              error={errors.fullyEarnedCharges}
-              hint="Fees, taxes, or TRIA kept in full — never returned."
-            >
-              <input
-                id="fully-earned-charges"
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                aria-invalid={Boolean(errors.fullyEarnedCharges)}
-                value={form.fullyEarnedCharges}
-                onChange={(event) => setField("fullyEarnedCharges", event.target.value)}
-              />
-            </Field>
-
-            <Field
-              label="TRIA (terrorism) tier"
-              htmlFor="tria-tier"
-              hint="Tier rate × premium, fully earned. Pick the tier for the venue."
-            >
+            <Field label="TRIA (terrorism) tier" htmlFor="tria-tier" hint="Display only — not part of the return.">
               <select
                 id="tria-tier"
                 value={form.triaTier}
@@ -302,6 +285,24 @@ function App() {
                 <option value="tier2">Tier 2 — 5%</option>
                 <option value="tier3">Tier 3 — 3%</option>
               </select>
+            </Field>
+
+            <Field
+              label="Fees (optional)"
+              htmlFor="fees"
+              error={errors.fullyEarnedCharges}
+              hint="Excluded from the return unless enabled."
+            >
+              <input
+                id="fees"
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                aria-invalid={Boolean(errors.fullyEarnedCharges)}
+                value={form.fullyEarnedCharges}
+                onChange={(event) => setField("fullyEarnedCharges", event.target.value)}
+              />
             </Field>
           </div>
         </form>
@@ -338,21 +339,23 @@ function App() {
                   <dd>{cancellationTypeLabel(result.cancellationType)}</dd>
                 </div>
                 <div>
-                  <dt>Deposit premium</dt>
+                  <dt>Risk premium</dt>
                   <dd>{formatCurrency(result.depositPremium)}</dd>
                 </div>
                 <div>
                   <dt>Minimum earned</dt>
                   <dd>{result.minimumEarnedPremiumPercent}%</dd>
                 </div>
-                <div>
-                  <dt>Fully earned charges</dt>
-                  <dd>{formatCurrency(result.fullyEarnedChargesRetained)}</dd>
-                </div>
                 {result.triaAmount > 0 ? (
                   <div>
                     <dt>TRIA ({triaTierLabel(result.triaTier)})</dt>
-                    <dd>{formatCurrency(result.triaAmount)}</dd>
+                    <dd>{formatCurrency(result.triaAmount)} (excl.)</dd>
+                  </div>
+                ) : null}
+                {result.fullyEarnedChargesRetained > 0 ? (
+                  <div>
+                    <dt>Fees</dt>
+                    <dd>{formatCurrency(result.fullyEarnedChargesRetained)} (excl.)</dd>
                   </div>
                 ) : null}
               </dl>
@@ -363,7 +366,7 @@ function App() {
                 </span>
                 <p className="result-sentence">
                   {capitalize(cancellationTypeLabel(result.cancellationType))}, {result.earnedDays} of{" "}
-                  {result.totalPolicyDays} days earned — return premium{" "}
+                  {result.totalPolicyDays} days earned — estimated return premium{" "}
                   <strong>{formatCurrency(result.finalReturnPremium)}</strong> (
                   {result.appliesShortRate ? "short rate" : "straight pro rata"}, {controlsLabel(result)}
                   ).
@@ -371,7 +374,7 @@ function App() {
               </div>
 
               <div className="summary-total">
-                <span>Final return premium</span>
+                <span>Estimated return premium</span>
                 <strong>{formatCurrency(result.finalReturnPremium)}</strong>
               </div>
 
@@ -388,52 +391,62 @@ function App() {
                     value={`${result.earnedDays} / ${result.unearnedDays} days`}
                   />
                   <Step
-                    label="Pro-rata factor"
-                    value={String(result.proRataFactor)}
-                    note="unearned ÷ total days"
+                    label="Risk / base premium"
+                    value={formatCurrency(result.depositPremium)}
+                    note="in-force at cancellation"
                   />
                   <Step
                     label="Method"
                     value={result.appliesShortRate ? "Short rate (0.9 × pro rata)" : "Straight pro rata"}
                     note={cancellationTypeLabel(result.cancellationType)}
                   />
-                  {result.appliesShortRate ? (
-                    <Step
-                      label="Short-rate factor"
-                      value={String(result.cancellationReturnFactor)}
-                      note={`0.9 × ${result.proRataFactor}`}
-                    />
-                  ) : null}
                   <Step
-                    label="Earned via cancellation"
-                    value={formatCurrency(result.earnedFromCancellation)}
+                    label="Applicable factor"
+                    value={String(result.cancellationReturnFactor)}
+                    note={
+                      result.appliesShortRate
+                        ? "truncated 0.9 × pro rata (3 dp)"
+                        : "truncated pro rata (3 dp)"
+                    }
                   />
                   <Step
-                    label={`Earned via minimum (${result.minimumEarnedPremiumPercent}%)`}
-                    value={formatCurrency(result.earnedFromMinimum)}
+                    label="Gross return (base × factor)"
+                    value={formatCurrency(result.grossReturn)}
                   />
                   <Step
-                    label="Carrier keeps the greater"
-                    value={formatCurrency(result.earnedPremium)}
-                    note={controlsLabel(result)}
+                    label="Retained via factor"
+                    value={formatCurrency(result.retainedViaFactor)}
+                  />
+                  <Step
+                    label={`Retained via minimum (${result.minimumEarnedPremiumPercent}%)`}
+                    value={formatCurrency(result.retainedViaMinimum)}
+                  />
+                  <Step
+                    label="Controls"
+                    value={result.minimumBinds ? "Minimum earned" : "Cancellation factor"}
+                    note={
+                      result.minimumBinds
+                        ? "minimum earned premium retains more"
+                        : "cancellation factor retains more"
+                    }
                     highlight
                   />
-                  {result.fullyEarnedChargesRetained > 0 ? (
-                    <Step
-                      label="Fully earned charges retained"
-                      value={formatCurrency(result.fullyEarnedChargesRetained)}
-                      note="kept in full, never returned"
-                    />
-                  ) : null}
                   {result.triaAmount > 0 ? (
                     <Step
                       label={`TRIA retained (${triaTierLabel(result.triaTier)})`}
                       value={formatCurrency(result.triaAmount)}
-                      note="fully earned, never returned"
+                      note="display only — not in the return"
+                    />
+                  ) : null}
+                  {result.fullyEarnedChargesRetained > 0 ? (
+                    <Step
+                      label="Fees retained"
+                      value={formatCurrency(result.fullyEarnedChargesRetained)}
+                      note="excluded from the return"
                     />
                   ) : null}
                   <Step
-                    label="Return premium"
+                    label="Estimated return premium"
                     value={formatCurrency(result.finalReturnPremium)}
                     isFinal
                   />
@@ -527,9 +540,7 @@ function cancellationTypeLabel(type: CancellationType): string {
 }
 
 function controlsLabel(result: CalculationResult): string {
-  return result.earnedFromMinimum > result.earnedFromCancellation
-    ? "minimum earned premium controls"
-    : "cancellation factor controls";
+  return result.minimumBinds ? "minimum earned controls" : "cancellation factor controls";
 }
 
 function capitalize(value: string): string {
@@ -544,7 +555,7 @@ function triaTierLabel(tier: TriaTier): string {
 }
 
 function buildSummaryText(form: FormState, result: CalculationResult): string {
-  return [
+  const lines = [
     "E&S Return Premium — Summary",
     "",
     `${capitalize(cancellationTypeLabel(result.cancellationType))}, ${result.earnedDays} of ${result.totalPolicyDays} days earned.`,
@@ -552,17 +563,23 @@ function buildSummaryText(form: FormState, result: CalculationResult): string {
     "",
     `Policy term: ${form.policyEffectiveDate} to ${form.policyExpirationDate}`,
     `Cancellation effective: ${form.cancellationEffectiveDate}`,
-    `Deposit premium: ${formatCurrency(result.depositPremium)}`,
+    `Risk premium (in-force at cancellation): ${formatCurrency(result.depositPremium)}`,
+    `Applicable factor (truncated 3 dp): ${result.cancellationReturnFactor}`,
+    `Gross return (base × factor): ${formatCurrency(result.grossReturn)}`,
     `Minimum earned premium: ${result.minimumEarnedPremiumPercent}%`,
-    `Fully earned charges (retained): ${formatCurrency(result.fullyEarnedChargesRetained)}`,
-    ...(result.triaAmount > 0
-      ? [`TRIA (${triaTierLabel(result.triaTier)}, retained): ${formatCurrency(result.triaAmount)}`]
-      : []),
-    "",
-    `Pro-rata factor: ${result.proRataFactor}`,
-    `Cancellation return factor: ${result.cancellationReturnFactor}`,
-    `Return premium: ${formatCurrency(result.finalReturnPremium)}`
-  ].join("\n");
+    `Retained via factor: ${formatCurrency(result.retainedViaFactor)}`,
+    `Retained via minimum: ${formatCurrency(result.retainedViaMinimum)}`
+  ];
+
+  if (result.triaAmount > 0) {
+    lines.push(`TRIA retained (display only, excluded): ${formatCurrency(result.triaAmount)}`);
+  }
+  if (result.fullyEarnedChargesRetained > 0) {
+    lines.push(`Fees retained (excluded): ${formatCurrency(result.fullyEarnedChargesRetained)}`);
+  }
+
+  lines.push("", `Estimated return premium: ${formatCurrency(result.finalReturnPremium)}`);
+  return lines.join("\n");
 }
 
 function parseAmount(value: string): number {
