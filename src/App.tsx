@@ -221,13 +221,13 @@ function App() {
             >
               <input
                 id="risk-premium"
-                type="number"
-                min="0"
-                step="0.01"
+                type="text"
                 inputMode="decimal"
                 aria-invalid={Boolean(errors.depositPremium)}
-                value={form.depositPremium}
-                onChange={(event) => setField("depositPremium", event.target.value)}
+                value={formatNumberInput(form.depositPremium)}
+                onChange={(event) =>
+                  setField("depositPremium", sanitizeNumericInput(event.target.value))
+                }
               />
             </Field>
 
@@ -235,9 +235,16 @@ function App() {
               <select
                 id="cancellation-type"
                 value={form.cancellationType}
-                onChange={(event) =>
-                  setField("cancellationType", event.target.value as CancellationType)
-                }
+                onChange={(event) => {
+                  const nextType = event.target.value as CancellationType;
+                  setCopied(null);
+                  setForm((current) => ({
+                    ...current,
+                    cancellationType: nextType,
+                    // Auto-switch the method per the rules: carrier = pro-rata, insured/non-pay = short rate.
+                    preset: nextType === "company" ? "standard" : "minimumPremiumEndorsement"
+                  }));
+                }}
               >
                 <option value="insured">Insured cancellation</option>
                 <option value="nonPayment">Non-payment</option>
@@ -245,7 +252,11 @@ function App() {
               </select>
             </Field>
 
-            <Field label="Calculation preset" htmlFor="calculation-preset">
+            <Field
+              label="Calculation preset"
+              htmlFor="calculation-preset"
+              hint="Auto-set from cancellation type — override if needed."
+            >
               <select
                 id="calculation-preset"
                 value={form.preset}
@@ -606,6 +617,26 @@ function parseAmount(value: string): number {
   }
 
   return Number(value);
+}
+
+// Keep only digits and a single decimal point (stored without commas).
+function sanitizeNumericInput(value: string): string {
+  const cleaned = value.replace(/[^\d.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) {
+    return cleaned;
+  }
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}
+
+// Display the stored numeric string with thousands separators.
+function formatNumberInput(raw: string): string {
+  if (raw === "") {
+    return "";
+  }
+  const [intPart, ...rest] = raw.split(".");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return rest.length ? `${grouped}.${rest.join("")}` : grouped;
 }
 
 export default App;
